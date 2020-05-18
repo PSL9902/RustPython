@@ -68,7 +68,10 @@ impl PyLock {
             true if timeout < 0.0 => {
                 Err(vm.new_value_error("timeout value must be positive".to_owned()))
             }
-            true => Ok(mu.try_lock_for(Duration::from_secs_f64(timeout))),
+            true => {
+                // TODO: respect TIMEOUT_MAX here
+                Ok(mu.try_lock_for(Duration::from_secs_f64(timeout)))
+            }
             false if timeout != -1.0 => {
                 Err(vm
                     .new_value_error("can't specify a timeout for a non-blocking call".to_owned()))
@@ -185,6 +188,7 @@ fn thread_start_new_thread(
         let args = Args::from(args.as_slice().to_owned());
         let kwargs = KwArgs::from(kwargs.map_or_else(Default::default, |k| k.to_attributes()));
         if let Err(exc) = func.invoke(PyFuncArgs::from((args, kwargs)), vm) {
+            // TODO: sys.unraisablehook
             let stderr = std::io::stderr();
             let mut stderr = stderr.lock();
             let repr = vm.to_repr(&func.into_object()).ok();
