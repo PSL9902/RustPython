@@ -32,10 +32,39 @@ struct AcquireArgs {
     timeout: Either<f64, isize>,
 }
 
+macro_rules! acquire_lock_impl {
+    ($mu:expr, $args:expr, $vm:expr) => {{
+        let (mu, args, vm) = ($mu, $args, $vm);
+        let timeout = match args.timeout {
+            Either::A(f) => f,
+            Either::B(i) => i as f64,
+        };
+        match args.waitflag {
+            true if timeout == -1.0 => {
+                mu.lock();
+                Ok(true)
+            }
+            true if timeout < 0.0 => {
+                Err(vm.new_value_error("timeout value must be positive".to_owned()))
+            }
+            true => {
+                // TODO: respect TIMEOUT_MAX here
+                Ok(mu.try_lock_for(Duration::from_secs_f64(timeout)))
+            }
+            false if timeout != -1.0 => {
+                Err(vm
+                    .new_value_error("can't specify a timeout for a non-blocking call".to_owned()))
+            }
+            false => Ok(mu.try_lock()),
+        }
+    }};
+}
+
 #[pyclass(name = "lock")]
 struct PyLock {
     mu: RawMutex,
 }
+type PyLockRef = PyRef<PyLock>;
 
 impl PyValue for PyLock {
     fn class(vm: &VirtualMachine) -> PyClassRef {
@@ -56,28 +85,7 @@ impl PyLock {
     #[pymethod(name = "__enter__")]
     #[allow(clippy::float_cmp, clippy::match_bool)]
     fn acquire(&self, args: AcquireArgs, vm: &VirtualMachine) -> PyResult<bool> {
-        let timeout = match args.timeout {
-            Either::A(f) => f,
-            Either::B(i) => i as f64,
-        };
-        match args.waitflag {
-            true if args.timeout == -1.0 => {
-                self.mu.lock();
-                Ok(true)
-            }
-            true if timeout < 0.0 => {
-                Err(vm.new_value_error("timeout value must be positive".to_owned()))
-            }
-            true => {
-                // TODO: respect TIMEOUT_MAX here
-                Ok(mu.try_lock_for(Duration::from_secs_f64(timeout)))
-            }
-            false if timeout != -1.0 => {
-                Err(vm
-                    .new_value_error("can't specify a timeout for a non-blocking call".to_owned()))
-            }
-            false => Ok(self.mu.try_lock()),
-        }
+        acquire_lock_impl!(&self.mu, args, vm)
     }
     #[pymethod]
     #[pymethod(name = "release_lock")]
@@ -129,21 +137,7 @@ impl PyRLock {
     #[pymethod(name = "__enter__")]
     #[allow(clippy::float_cmp, clippy::match_bool)]
     fn acquire(&self, args: AcquireArgs, vm: &VirtualMachine) -> PyResult<bool> {
-        match args.waitflag {
-            true if args.timeout == -1.0 => {
-                self.mu.lock();
-                Ok(true)
-            }
-            true if args.timeout < 0.0 => {
-                Err(vm.new_value_error("timeout value must be positive".to_owned()))
-            }
-            true => Ok(self.mu.try_lock_for(Duration::from_secs_f64(args.timeout))),
-            false if args.timeout != -1.0 => {
-                Err(vm
-                    .new_value_error("can't specify a timeout for a non-blocking call".to_owned()))
-            }
-            false => Ok(self.mu.try_lock()),
-        }
+        acquire_lock_impl!(&self.mu, args, vm)
     }
     #[pymethod]
     #[pymethod(name = "release_lock")]
